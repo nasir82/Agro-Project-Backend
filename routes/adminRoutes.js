@@ -33,7 +33,7 @@ const router = express.Router();
 // Admin only middleware
 const adminOnly = verifyRole(["admin"]);
 
-// User Management
+// User Management part
 router.get("/users", verifyJWT, adminOnly, getAllUsers);
 router.get("/users/stats", verifyJWT, adminOnly, getUserStats);
 router.get("/users/export", verifyJWT, adminOnly, exportUsers);
@@ -53,7 +53,7 @@ router.patch(
 router.post("/users/bulk-action", verifyJWT, adminOnly, bulkUserAction);
 router.patch("/users/role", verifyJWT, adminOnly, updateRole);
 
-// Product Management
+// Product Management part
 router.get("/products", verifyJWT, adminOnly, getAllProducts);
 router.get("/products/stats", verifyJWT, adminOnly, getProductStats);
 router.patch(
@@ -82,7 +82,7 @@ router.get(
 	getProductHistory
 );
 
-// Application Management
+// Application Management part
 router.get("/applications", verifyJWT, adminOnly, getAllApplications);
 router.put(
 	"/applications/:id/status",
@@ -97,7 +97,7 @@ router.post(
 	addApplicationNote
 );
 
-// Agent Management
+// Agent Management part
 router.get("/agents", verifyJWT, adminOnly, getAllAgents);
 
 export default router;

@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 
 // Import routes
 import productRoutes from "./routes/productRoutes.js";
+import regionRoutes from "./routes/regionRoutes.js";
 // Import middleware
 import { errorHandler } from "./middleware/errorHandler.js";
 
@@ -39,6 +40,8 @@ app.use(cookieParser());
 
 // Routes
 app.use("/products", productRoutes);
+app.use("/users", userRoutes);
+app.use("/regions", regionRoutes);
 
 // Base route
 app.get("/", (req, res) => {

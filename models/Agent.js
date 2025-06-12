@@ -1,5 +1,64 @@
 import mongoose from "mongoose";
 
+
+/**
+ * Agent-detail Schema
+ * -------------------
+ * This schema defines the structure of the "Agent-detail" collection, used to store 
+ * information about agents managing warehouse facilities in the system.
+ *
+ * Fields:
+ * - userId (ObjectId): Reference to the associated user (required).
+ * - name (String): Full name of the agent (required).
+ * - email (String): Unique email address (required, lowercase, trimmed).
+ * - phoneNumber (String): Contact phone number (required).
+ *
+ * - warehouseAddress (Object):
+ *   - street (String): Street address (required).
+ *   - district (String): District name (required).
+ *   - region (String): Region name (required).
+ *   - postalCode (String): Postal code (optional).
+ *   - gpsCoordinates (Object): { latitude (Number), longitude (Number) } (optional).
+ *
+ * - identificationDocument (Object):
+ *   - documentType (String): One of "national_id", "passport", "driving_license", "business_license" (required).
+ *   - documentNumber (String): Unique document number (required).
+ *   - documentImage (String): URL or path to image file (required).
+ *
+ * - warehouseCapacity (Number): Capacity of the warehouse in units (required, min: 0).
+ * - warehouseImages (Array of String): At least one image URL is required.
+ * - status (String): Agent application status - "pending", "approved", or "rejected" (default: "pending").
+ *
+ * - membershipFee (Object):
+ *   - amount (Number): Membership fee amount (required).
+ *   - paid (Boolean): Whether the fee has been paid (default: false).
+ *   - paymentDate (Date): When the fee was paid (optional).
+ *   - transactionId (String): Associated transaction ID (optional).
+ *
+ * - sellerCount (Number): Number of sellers associated with the agent (default: 0).
+ * - reviewCount (Number): Number of reviews received (default: 0).
+ * - averageRating (Number): Average rating out of 5 (default: 0, min: 0, max: 5).
+ * - applicationDate (Date): Date of application submission (default: Date.now).
+ *
+ * - approvedBy (Object):
+ *   - adminId (ObjectId): Reference to the admin who approved (optional).
+ *   - approvedAt (Date): Date of approval (optional).
+ *   - notes (String): Optional approval/rejection notes.
+ *
+ * - isActive (Boolean): Whether the agent is currently active (default: true).
+ *
+ * Timestamps:
+ * - createdAt: Auto-generated.
+ * - updatedAt: Auto-generated.
+ *
+ * Indexes:
+ * - status
+ * - warehouseAddress.region
+ * - warehouseAddress.district
+ * - email
+ * - userId
+ */
+
 const agentSchema = new mongoose.Schema(
 	{
 		userId: {

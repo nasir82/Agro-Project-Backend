@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-const agentSchema = new mongoose.Schema(
+const sellerSchema = new mongoose.Schema(
 	{
 		// Basic user information
 		userId: {
@@ -49,53 +49,57 @@ const agentSchema = new mongoose.Schema(
 			required: true,
 		},
 
-		// Agent-specific properties
-		agentId: {
-			type: String,
-			unique: true,
-			required: true, // Auto-generated agent ID
-		},
-
-		// Business information - extracted from formData for easier querying
-		businessName: {
+		// Farm information - extracted from formData for easier querying
+		farmName: {
 			type: String,
 			required: true,
 			trim: true,
 		},
-		businessType: {
+		farmType: {
 			type: String,
 			enum: [
-				"Agricultural Trading",
-				"Wholesale Distribution",
-				"Logistics & Transportation",
-				"Cold Storage",
-				"Food Processing",
-				"Import/Export",
+				"Crop Farming",
+				"Vegetable Farming",
+				"Fruit Farming",
+				"Dairy Farming",
+				"Poultry Farming",
+				"Fish Farming",
+				"Livestock Farming",
+				"Organic Farming",
+				"Mixed Farming",
 				"Other",
 			],
+			required: true,
+		},
+		farmSize: {
+			type: String,
 			required: true,
 		},
 		experience: {
 			type: String,
 			required: true,
 		},
-		warehouseAddress: {
+		farmAddress: {
 			type: String,
 			required: true,
 		},
-		warehouseSize: {
+		specialization: {
 			type: String,
 			required: true,
 		},
-		coverageAreas: {
+		certifications: {
+			type: String,
+			default: "",
+		},
+		nidNumber: {
 			type: String,
 			required: true,
 		},
-		businessLicense: {
+		nidCopy: {
 			type: String, // URL
 			default: "",
 		},
-		warehouseImages: {
+		farmPhotos: {
 			type: [String], // Array of URLs
 			default: [],
 		},
@@ -106,6 +110,14 @@ const agentSchema = new mongoose.Schema(
 			required: true,
 		},
 		district: {
+			type: String,
+			required: true,
+		},
+		upazila: {
+			type: String,
+			required: true,
+		},
+		village: {
 			type: String,
 			required: true,
 		},
@@ -131,12 +143,7 @@ const agentSchema = new mongoose.Schema(
 		},
 		verified: {
 			type: Boolean,
-			default: false, // Approved applications are verified
-		},
-		agentLevel: {
-			type: String,
-			enum: ["junior", "senior", "lead"],
-			default: "junior",
+			default: false,
 		},
 
 		// Application approval details
@@ -150,55 +157,40 @@ const agentSchema = new mongoose.Schema(
 			required: true,
 		},
 
-		// Basic performance tracking
-		performance: {
-			totalApplicationsReviewed: { type: Number, default: 0 },
-			applicationsApproved: { type: Number, default: 0 },
-			applicationsRejected: { type: Number, default: 0 },
+		// Basic performance metrics
+		totalProducts: {
+			type: Number,
+			default: 0,
+		},
+		totalSales: {
+			type: Number,
+			default: 0,
 		},
 		rating: {
 			average: { type: Number, default: 0, min: 0, max: 5 },
 			count: { type: Number, default: 0 },
-		},
-
-		// Current workload
-		assignedApplications: [
-			{
-				applicationId: { type: String, ref: "Application" },
-				assignedAt: Date,
-				status: {
-					type: String,
-					enum: ["assigned", "in-progress", "completed"],
-					default: "assigned",
-				},
-			},
-		],
-		maxDailyApplications: {
-			type: Number,
-			default: 10,
 		},
 	},
 	{ timestamps: true }
 );
 
 // Essential indexes
-agentSchema.index({ userId: 1 });
-agentSchema.index({ agentId: 1 });
-agentSchema.index({ email: 1 });
-agentSchema.index({ isActive: 1 });
-agentSchema.index({ verified: 1 });
-agentSchema.index({ "operationalArea.region": 1 });
-agentSchema.index({ "operationalArea.district": 1 });
-agentSchema.index({ businessType: 1 });
-agentSchema.index({ region: 1, district: 1 });
+sellerSchema.index({ userId: 1 });
+sellerSchema.index({ email: 1 });
+sellerSchema.index({ isActive: 1 });
+sellerSchema.index({ verified: 1 });
+sellerSchema.index({ "operationalArea.region": 1 });
+sellerSchema.index({ "operationalArea.district": 1 });
+sellerSchema.index({ farmType: 1 });
+sellerSchema.index({ region: 1, district: 1 });
 
 // Pre-save middleware to ensure userId is a string
-agentSchema.pre("save", function (next) {
+sellerSchema.pre("save", function (next) {
 	if (this.userId && typeof this.userId !== "string") {
 		this.userId = this.userId.toString();
 	}
 	next();
 });
 
-const Agent = mongoose.model("Agent", agentSchema);
-export default Agent;
+const Seller = mongoose.model("Seller", sellerSchema);
+export default Seller;

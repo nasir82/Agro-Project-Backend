@@ -27,13 +27,14 @@ import {
 	editProduct,
 	getProductHistory,
 } from "../controllers/adminControllers.js";
+import { getAdminOrders } from "../controllers/orderController.js";
 
 const router = express.Router();
 
 // Admin only middleware
 const adminOnly = verifyRole(["admin"]);
 
-// User Management part
+// User Management
 router.get("/users", verifyJWT, adminOnly, getAllUsers);
 router.get("/users/stats", verifyJWT, adminOnly, getUserStats);
 router.get("/users/export", verifyJWT, adminOnly, exportUsers);
@@ -53,7 +54,7 @@ router.patch(
 router.post("/users/bulk-action", verifyJWT, adminOnly, bulkUserAction);
 router.patch("/users/role", verifyJWT, adminOnly, updateRole);
 
-// Product Management part
+// Product Management
 router.get("/products", verifyJWT, adminOnly, getAllProducts);
 router.get("/products/stats", verifyJWT, adminOnly, getProductStats);
 router.patch(
@@ -82,7 +83,7 @@ router.get(
 	getProductHistory
 );
 
-// Application Management part
+// Application Management
 router.get("/applications", verifyJWT, adminOnly, getAllApplications);
 router.put(
 	"/applications/:id/status",
@@ -97,7 +98,10 @@ router.post(
 	addApplicationNote
 );
 
-// Agent Management part
+// Agent Management
 router.get("/agents", verifyJWT, adminOnly, getAllAgents);
+
+// Order Management
+router.get("/orders", verifyJWT, adminOnly, getAdminOrders);
 
 export default router;

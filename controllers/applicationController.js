@@ -1,5 +1,8 @@
-import Application from "../models/applicationModel.js";
+import Application from "../models/Application.js";
 import User from "../models/User.js"; // Assuming User model path
+import Seller from "../models/Seller.js";
+import Agent from "../models/Agent.js";
+import Admin from "../models/Admin.js";
 
 // Submit a new application
 export const submitApplication = async (req, res) => {
@@ -43,7 +46,7 @@ export const submitApplication = async (req, res) => {
 			application: newApplication,
 		});
 	} catch (error) {
-		console.error("Error submitting application:", error);
+		// console.error("Error submitting application:", error);
 		res.status(500).json({
 			success: false,
 			message: "Server error while submitting application.",
@@ -60,7 +63,7 @@ export const getMyApplications = async (req, res) => {
 		}).sort({ createdAt: -1 });
 		res.json({ success: true, applications });
 	} catch (error) {
-		console.error("Error fetching user applications:", error);
+		// console.error("Error fetching user applications:", error);
 		res.status(500).json({
 			success: false,
 			message: "Server error while fetching applications.",
@@ -91,14 +94,14 @@ export const getApplicationById = async (req, res) => {
 		}
 		res.json({ success: true, application });
 	} catch (error) {
-		console.error("Error fetching application by ID:", error);
+		// console.error("Error fetching application by ID:", error);
 		res
 			.status(500)
 			.json({ success: false, message: "Server error.", error: error.message });
 	}
 };
 
-// Get all applications (for admins/reviewers) - ENHANCED with better query support
+// Get all applications (for admins/agents) - ENHANCED with better query support
 export const getAllApplications = async (req, res) => {
 	try {
 		const {
@@ -107,6 +110,7 @@ export const getAllApplications = async (req, res) => {
 			applicationType,
 			search,
 			region,
+			district,
 			page = 1,
 			limit = 10,
 			sortBy = "createdAt",
@@ -116,25 +120,58 @@ export const getAllApplications = async (req, res) => {
 		// Build query object
 		const query = {};
 
-		// Filter by status if specified
-		if (status && status !== "all") {
-			query.status = status;
-		}
+		// Role-based filtering
+		const userRole = req.decoded.role;
 
-		// Filter by application type if specified (support both 'type' and 'applicationType')
-		if (type && type !== "all") {
-			query.applicationType = type;
-		}
-		if (applicationType && applicationType !== "all") {
-			query.applicationType = applicationType;
-		}
+		if (userRole === "agent") {
+			// Agents can only see seller-applications from their region and district
+			query.applicationType = "seller-application";
 
-		// Filter by region if specified
-		if (region && region !== "all") {
+			// Agent must provide region and district in query params
+			if (!region || !district) {
+				return res.status(400).json({
+					success: false,
+					message:
+						"Agents must provide region and district in query parameters",
+				});
+			}
+
 			query["operationalArea.region"] = region;
+			query["operationalArea.district"] = district;
+		} else if (userRole === "admin") {
+			// Admins can see all applications with optional filtering
+
+			// Filter by status if specified
+			if (status && status !== "all") {
+				query.status = status;
+			}
+
+			// Filter by application type if specified (support both 'type' and 'applicationType')
+			if (type && type !== "all") {
+				query.applicationType = type;
+			}
+			if (applicationType && applicationType !== "all") {
+				query.applicationType = applicationType;
+			}
+
+			// Filter by region if specified
+			if (region && region !== "all") {
+				query["operationalArea.region"] = region;
+			}
+
+			// Filter by district if specified
+			if (district && district !== "all") {
+				query["operationalArea.district"] = district;
+			}
+		} else {
+			// Other roles are not authorized
+			return res.status(403).json({
+				success: false,
+				message: "Access denied. Only admins and agents can view applications.",
+			});
 		}
 
-		// Search by applicant name or email if specified
+		// Search by applicant name or email if specified (available for both roles)
 		if (search && search.trim()) {
 			query.$or = [
 				{ applicantName: { $regex: search.trim(), $options: "i" } },
@@ -169,9 +206,17 @@ export const getAllApplications = async (req, res) => {
 			totalPages,
 			currentPage: pageNumber,
 			pageSize,
+			userRole, // Include user role in response for frontend reference
+			appliedFilters: {
+				...(userRole === "agent" && {
+					restrictedTo: "seller-applications",
+					region,
+					district,
+				}),
+			},
 		});
 	} catch (error) {
-		console.error("Error fetching all applications:", error);
+		// console.error("Error fetching all applications:", error);
 		res
 			.status(500)
 			.json({ success: false, message: "Server error.", error: error.message });
@@ -182,8 +227,9 @@ export const getAllApplications = async (req, res) => {
 export const approveApplication = async (req, res) => {
 	try {
 		const { id } = req.params;
-		const { reason = "Application approved", adminId } = req.body;
-		const reviewerId = adminId || req.decoded.id;
+		const { reason, reviewedBy } = req.body;
+		const reviewerId = reviewedBy || req.decoded.id;
+		const approvalReason = reason || "Application approved";
 
 		const application = await Application.findById(id);
 		if (!application) {
@@ -196,36 +242,165 @@ export const approveApplication = async (req, res) => {
 		application.status = "approved";
 		application.reviewedAt = new Date();
 		application.reviewedBy = reviewerId;
-		application.reviewNotes = reason;
+		application.reviewNotes = approvalReason;
 
 		// Update user role based on application type
 		const userToUpdate = await User.findById(application.applicantId);
-		if (userToUpdate) {
-			let newRole = userToUpdate.role;
-
-			if (application.applicationType === "seller-application" || application.applicationType === "agent-application") {
-				// Update region and district for sellers & agents 
-				userToUpdate.operationalArea = {
-					region: application.operationalArea.region,
-					district: application.operationalArea.district,
-				};
-				newRole = application.applicationType === "seller-application" ? "seller" : "agent";
-        if(application.applicationType === "agent-application"){
-          userToUpdate.verified = true;
-        }
-			} else if (application.applicationType === "admin-application") {
-				newRole = "admin";
-			}
-
-			userToUpdate.role = newRole;
-			await userToUpdate.save();
-
-			console.log(
-				`Application ${application._id} approved. User ${application.applicantId} role updated to ${newRole}.`
-			);
+		if (!userToUpdate) {
+			return res.status(404).json({
+				success: false,
+				message: "User not found for this application.",
+			});
 		}
 
+		let newRole = userToUpdate.role;
+		let createdRecord = null;
+
+		if (application.applicationType === "seller-application") {
+			// Create Seller record
+			const sellerData = {
+				userId: application.applicantId,
+				name: application.applicantName,
+				email: application.applicantEmail,
+				phoneNumber: userToUpdate.phoneNumber || "",
+				profilePicture: application.applicantImg,
+				fullAddress: userToUpdate.fullAddress || "",
+				applicationId: application._id.toString(),
+				operationalArea: application.operationalArea,
+				formData: application.formData,
+				// Map formData fields to model fields
+				farmName: application.formData.farmName || "Unknown Farm",
+				farmType: application.formData.farmType || "Other",
+				farmSize: application.formData.farmSize || "Unknown",
+				experience: application.formData.experience || "Not specified",
+				farmAddress: application.formData.farmAddress || "",
+				specialization:
+					application.formData.specialization || "General farming",
+				certifications: application.formData.certifications || "",
+				nidNumber: application.formData.nidNumber || "",
+				nidCopy: application.formData.nidCopy || "",
+				farmPhotos: application.formData.farmPhotos || [],
+				region:
+					application.formData.region || application.operationalArea.region,
+				district:
+					application.formData.district || application.operationalArea.district,
+				upazila: application.formData.upazila || "",
+				village: application.formData.village || "",
+				bankAccountDetails: application.formData.bankAccountDetails || "",
+				references: application.formData.references || "",
+				motivation: application.formData.motivation || "Join platform",
+				verified: true, // Set to true since application is approved
+				approvedBy: reviewerId,
+				approvedAt: new Date(),
+			};
+
+			const newSeller = new Seller(sellerData);
+			createdRecord = await newSeller.save();
+			newRole = "seller";
+
+			// Update user operational area
+			userToUpdate.operationalArea = {
+				region: application.operationalArea.region,
+				district: application.operationalArea.district,
+			};
+			userToUpdate.verified = true;
+		} else if (application.applicationType === "agent-application") {
+			// Generate unique agent ID
+			const agentCount = await Agent.countDocuments();
+			const agentId = `AGT-${Date.now()}-${String(agentCount + 1).padStart(
+				4,
+				"0"
+			)}`;
+
+			// Create Agent record
+			const agentData = {
+				userId: application.applicantId,
+				name: application.applicantName,
+				email: application.applicantEmail,
+				phoneNumber: userToUpdate.phoneNumber || "",
+				profilePicture: application.applicantImg,
+				fullAddress: userToUpdate.fullAddress || "",
+				applicationId: application._id.toString(),
+				operationalArea: application.operationalArea,
+				formData: application.formData,
+				agentId: agentId,
+				// Map formData fields to model fields
+				businessName: application.formData.businessName || "Unknown Business",
+				businessType: application.formData.businessType || "Other",
+				experience: application.formData.experience || "Not specified",
+				warehouseAddress: application.formData.warehouseAddress || "",
+				warehouseSize: application.formData.warehouseSize || "Unknown",
+				coverageAreas: application.formData.coverageAreas || "",
+				businessLicense: application.formData.businessLicense || "",
+				warehouseImages: application.formData.warehouseImages || [],
+				region:
+					application.formData.region || application.operationalArea.region,
+				district:
+					application.formData.district || application.operationalArea.district,
+				bankAccountDetails: application.formData.bankAccountDetails || "",
+				references: application.formData.references || "",
+				motivation: application.formData.motivation || "Join platform",
+				verified: true, // Set to true since application is approved
+				approvedBy: reviewerId,
+				approvedAt: new Date(),
+			};
+
+			const newAgent = new Agent(agentData);
+			createdRecord = await newAgent.save();
+			newRole = "agent";
+
+			// Update user operational area and set verified
+			userToUpdate.operationalArea = {
+				region: application.operationalArea.region,
+				district: application.operationalArea.district,
+			};
+			userToUpdate.verified = true;
+		} else if (application.applicationType === "admin-application") {
+			// Generate unique admin ID
+			const adminCount = await Admin.countDocuments();
+			const adminId = `ADM-${Date.now()}-${String(adminCount + 1).padStart(
+				4,
+				"0"
+			)}`;
+
+			// Create Admin record
+			const adminData = {
+				userId: application.applicantId,
+				name: application.applicantName,
+				email: application.applicantEmail,
+				phoneNumber: userToUpdate.phoneNumber || "",
+				profilePicture: application.applicantImg,
+				fullAddress: userToUpdate.fullAddress || "",
+				applicationId: application._id.toString(),
+				operationalArea: application.operationalArea,
+				formData: application.formData,
+				adminId: adminId,
+				adminLevel: application.formData.adminLevel || "junior",
+				department: application.formData.department || "operations",
+				experience: {
+					totalYears: application.formData.experience?.totalYears || 0,
+					description: application.formData.experience?.description || "",
+				},
+				verified: true, // Set to true since application is approved
+				approvedBy: reviewerId,
+				approvedAt: new Date(),
+			};
+
+			const newAdmin = new Admin(adminData);
+			createdRecord = await newAdmin.save();
+			newRole = "admin";
+		}
+
+		// Update user role
+		userToUpdate.role = newRole;
+		await userToUpdate.save();
+
+		// Save application
 		await application.save();
+
+		// console.log(
+		// 	`Application ${application._id} approved. User ${application.applicantId} role updated to ${newRole}.`
+		// );
 
 		res.json({
 			success: true,
@@ -236,9 +411,17 @@ export const approveApplication = async (req, res) => {
 				newRole: userToUpdate.role,
 				operationalArea: userToUpdate.operationalArea,
 			},
+			createdRecord: createdRecord
+				? {
+						type: newRole,
+						id: createdRecord._id,
+						[newRole + "Id"]:
+							createdRecord[newRole === "seller" ? "userId" : newRole + "Id"],
+				  }
+				: null,
 		});
 	} catch (error) {
-		console.error("Error approving application:", error);
+		// console.error("Error approving application:", error);
 		res.status(500).json({
 			success: false,
 			message: "Server error while approving application.",
@@ -251,8 +434,8 @@ export const approveApplication = async (req, res) => {
 export const rejectApplication = async (req, res) => {
 	try {
 		const { id } = req.params;
-		const { reason, adminId } = req.body;
-		const reviewerId = adminId || req.decoded.id;
+		const { reason, reviewedBy } = req.body;
+		const reviewerId = reviewedBy || req.decoded.id;
 
 		if (!reason || reason.trim().length === 0) {
 			return res.status(400).json({
@@ -282,7 +465,7 @@ export const rejectApplication = async (req, res) => {
 			application,
 		});
 	} catch (error) {
-		console.error("Error rejecting application:", error);
+		// console.error("Error rejecting application:", error);
 		res.status(500).json({
 			success: false,
 			message: "Server error while rejecting application.",
@@ -298,8 +481,9 @@ export const bulkApplicationAction = async (req, res) => {
 			applicationIds,
 			action,
 			reason = "Bulk action performed",
+			reviewedBy,
 		} = req.body;
-		const adminId = req.decoded.id;
+		const reviewerId = reviewedBy || req.decoded.id;
 
 		// Validate input
 		if (!Array.isArray(applicationIds) || applicationIds.length === 0) {
@@ -344,7 +528,7 @@ export const bulkApplicationAction = async (req, res) => {
 				// Update application
 				application.status = action === "approve" ? "approved" : "rejected";
 				application.reviewedAt = new Date();
-				application.reviewedBy = adminId;
+				application.reviewedBy = reviewerId;
 				application.reviewNotes = reason;
 
 				// If approving, update user role
@@ -352,16 +536,145 @@ export const bulkApplicationAction = async (req, res) => {
 					const userToUpdate = await User.findById(application.applicantId);
 					if (userToUpdate) {
 						let newRole = userToUpdate.role;
+						let createdRecord = null;
 
 						if (application.applicationType === "seller-application") {
+							// Create Seller record
+							const sellerData = {
+								userId: application.applicantId,
+								name: application.applicantName,
+								email: application.applicantEmail,
+								phoneNumber: userToUpdate.phoneNumber || "",
+								profilePicture: application.applicantImg,
+								fullAddress: userToUpdate.fullAddress || "",
+								applicationId: application._id.toString(),
+								operationalArea: application.operationalArea,
+								formData: application.formData,
+								// Map formData fields to model fields
+								farmName: application.formData.farmName || "Unknown Farm",
+								farmType: application.formData.farmType || "Other",
+								farmSize: application.formData.farmSize || "Unknown",
+								experience: application.formData.experience || "Not specified",
+								farmAddress: application.formData.farmAddress || "",
+								specialization:
+									application.formData.specialization || "General farming",
+								certifications: application.formData.certifications || "",
+								nidNumber: application.formData.nidNumber || "",
+								nidCopy: application.formData.nidCopy || "",
+								farmPhotos: application.formData.farmPhotos || [],
+								region:
+									application.formData.region ||
+									application.operationalArea.region,
+								district:
+									application.formData.district ||
+									application.operationalArea.district,
+								upazila: application.formData.upazila || "",
+								village: application.formData.village || "",
+								bankAccountDetails:
+									application.formData.bankAccountDetails || "",
+								references: application.formData.references || "",
+								motivation: application.formData.motivation || "Join platform",
+								verified: true, // Set to true since application is approved
+								approvedBy: reviewerId,
+								approvedAt: new Date(),
+							};
+
+							const newSeller = new Seller(sellerData);
+							createdRecord = await newSeller.save();
 							newRole = "seller";
-						} else if (application.applicationType === "agent-application") {
-							newRole = "agent";
+
+							// Update user operational area
 							userToUpdate.operationalArea = {
 								region: application.operationalArea.region,
 								district: application.operationalArea.district,
 							};
+						} else if (application.applicationType === "agent-application") {
+							// Generate unique agent ID
+							const agentCount = await Agent.countDocuments();
+							const agentId = `AGT-${Date.now()}-${String(
+								agentCount + 1
+							).padStart(4, "0")}`;
+
+							// Create Agent record
+							const agentData = {
+								userId: application.applicantId,
+								name: application.applicantName,
+								email: application.applicantEmail,
+								phoneNumber: userToUpdate.phoneNumber || "",
+								profilePicture: application.applicantImg,
+								fullAddress: userToUpdate.fullAddress || "",
+								applicationId: application._id.toString(),
+								operationalArea: application.operationalArea,
+								formData: application.formData,
+								agentId: agentId,
+								// Map formData fields to model fields
+								businessName:
+									application.formData.businessName || "Unknown Business",
+								businessType: application.formData.businessType || "Other",
+								experience: application.formData.experience || "Not specified",
+								warehouseAddress: application.formData.warehouseAddress || "",
+								warehouseSize: application.formData.warehouseSize || "Unknown",
+								coverageAreas: application.formData.coverageAreas || "",
+								businessLicense: application.formData.businessLicense || "",
+								warehouseImages: application.formData.warehouseImages || [],
+								region:
+									application.formData.region ||
+									application.operationalArea.region,
+								district:
+									application.formData.district ||
+									application.operationalArea.district,
+								bankAccountDetails:
+									application.formData.bankAccountDetails || "",
+								references: application.formData.references || "",
+								motivation: application.formData.motivation || "Join platform",
+								verified: true, // Set to true since application is approved
+								approvedBy: reviewerId,
+								approvedAt: new Date(),
+							};
+
+							const newAgent = new Agent(agentData);
+							createdRecord = await newAgent.save();
+							newRole = "agent";
+
+							// Update user operational area and set verified
+							userToUpdate.operationalArea = {
+								region: application.operationalArea.region,
+								district: application.operationalArea.district,
+							};
+							userToUpdate.verified = true;
 						} else if (application.applicationType === "admin-application") {
+							// Generate unique admin ID
+							const adminCount = await Admin.countDocuments();
+							const generatedAdminId = `ADM-${Date.now()}-${String(
+								adminCount + 1
+							).padStart(4, "0")}`;
+
+							// Create Admin record
+							const adminData = {
+								userId: application.applicantId,
+								name: application.applicantName,
+								email: application.applicantEmail,
+								phoneNumber: userToUpdate.phoneNumber || "",
+								profilePicture: application.applicantImg,
+								fullAddress: userToUpdate.fullAddress || "",
+								applicationId: application._id.toString(),
+								operationalArea: application.operationalArea,
+								formData: application.formData,
+								adminId: generatedAdminId,
+								adminLevel: application.formData.adminLevel || "junior",
+								department: application.formData.department || "operations",
+								experience: {
+									totalYears: application.formData.experience?.totalYears || 0,
+									description:
+										application.formData.experience?.description || "",
+								},
+								verified: true, // Set to true since application is approved
+								approvedBy: reviewerId,
+								approvedAt: new Date(),
+							};
+
+							const newAdmin = new Admin(adminData);
+							createdRecord = await newAdmin.save();
 							newRole = "admin";
 						}
 
@@ -386,7 +699,7 @@ export const bulkApplicationAction = async (req, res) => {
 			results,
 		});
 	} catch (error) {
-		console.error("Error performing bulk application action:", error);
+		// console.error("Error performing bulk application action:", error);
 		res.status(500).json({
 			success: false,
 			message: "Server error while performing bulk action.",
@@ -463,7 +776,7 @@ export const getApplicationStatistics = async (req, res) => {
 			},
 		});
 	} catch (error) {
-		console.error("Error fetching application statistics:", error);
+		// console.error("Error fetching application statistics:", error);
 		res.status(500).json({
 			success: false,
 			message: "Server error while fetching statistics.",
@@ -500,30 +813,122 @@ export const updateApplicationStatus = async (req, res) => {
 			application.reviewNotes = reviewNotes;
 		}
 
-		// If approved, update user role
+		// If approved, update user role and create model entries
 		if (status === "approved") {
 			const userToUpdate = await User.findById(application.applicantId);
 			if (userToUpdate) {
 				let newRole = userToUpdate.role;
-				if (application.applicationType === "seller-application")
+				let createdRecord = null;
+
+				if (application.applicationType === "seller-application") {
+					// Create Seller record
+					const sellerData = {
+						userId: application.applicantId,
+						name: application.applicantName,
+						email: application.applicantEmail,
+						phoneNumber: userToUpdate.phoneNumber || "",
+						profilePicture: application.applicantImg,
+						fullAddress: userToUpdate.fullAddress || "",
+						applicationId: application._id.toString(),
+						operationalArea: application.operationalArea,
+						formData: application.formData,
+						// Map formData fields to model fields
+						farmName: application.formData.farmName || "Unknown Farm",
+						farmType: application.formData.farmType || "Other",
+						farmSize: application.formData.farmSize || "Unknown",
+						experience: application.formData.experience || "Not specified",
+						farmAddress: application.formData.farmAddress || "",
+						specialization:
+							application.formData.specialization || "General farming",
+						certifications: application.formData.certifications || "",
+						nidNumber: application.formData.nidNumber || "",
+						nidCopy: application.formData.nidCopy || "",
+						farmPhotos: application.formData.farmPhotos || [],
+						region:
+							application.formData.region || application.operationalArea.region,
+						district:
+							application.formData.district ||
+							application.operationalArea.district,
+						upazila: application.formData.upazila || "",
+						village: application.formData.village || "",
+						bankAccountDetails: application.formData.bankAccountDetails || "",
+						references: application.formData.references || "",
+						motivation: application.formData.motivation || "Join platform",
+						verified: true,
+						approvedBy: reviewerId,
+						approvedAt: new Date(),
+					};
+
+					const newSeller = new Seller(sellerData);
+					createdRecord = await newSeller.save();
 					newRole = "seller";
-				else if (application.applicationType === "agent-application")
+				} else if (application.applicationType === "agent-application") {
+					// Generate unique agent ID
+					const agentCount = await Agent.countDocuments();
+					const agentId = `AGT-${Date.now()}-${String(agentCount + 1).padStart(
+						4,
+						"0"
+					)}`;
+
+					// Create Agent record
+					const agentData = {
+						userId: application.applicantId,
+						name: application.applicantName,
+						email: application.applicantEmail,
+						phoneNumber: userToUpdate.phoneNumber || "",
+						profilePicture: application.applicantImg,
+						fullAddress: userToUpdate.fullAddress || "",
+						applicationId: application._id.toString(),
+						operationalArea: application.operationalArea,
+						formData: application.formData,
+						agentId: agentId,
+						// Map formData fields to model fields
+						businessName:
+							application.formData.businessName || "Unknown Business",
+						businessType: application.formData.businessType || "Other",
+						experience: application.formData.experience || "Not specified",
+						warehouseAddress: application.formData.warehouseAddress || "",
+						warehouseSize: application.formData.warehouseSize || "Unknown",
+						coverageAreas: application.formData.coverageAreas || "",
+						businessLicense: application.formData.businessLicense || "",
+						warehouseImages: application.formData.warehouseImages || [],
+						region:
+							application.formData.region || application.operationalArea.region,
+						district:
+							application.formData.district ||
+							application.operationalArea.district,
+						bankAccountDetails: application.formData.bankAccountDetails || "",
+						references: application.formData.references || "",
+						motivation: application.formData.motivation || "Join platform",
+						verified: true,
+						approvedBy: reviewerId,
+						approvedAt: new Date(),
+					};
+
+					const newAgent = new Agent(agentData);
+					createdRecord = await newAgent.save();
 					newRole = "agent";
-				else if (application.applicationType === "admin-application")
+					userToUpdate.verified = true;
+				} else if (application.applicationType === "admin-application") {
 					newRole = "admin";
+				}
 
 				userToUpdate.role = newRole;
 
-				// If agent application, also update region based on operationalArea
-				if (application.applicationType === "agent-application") {
-					userToUpdate.region = application.operationalArea.region;
-					userToUpdate.district = application.operationalArea.district;
-				}
+				// Update user operational area
+				userToUpdate.operationalArea = {
+					region: application.operationalArea.region,
+					district: application.operationalArea.district,
+				};
 
 				await userToUpdate.save();
-				console.log(
-					`Application ${application._id} approved. User ${application.applicantId} role updated to ${newRole}.`
-				);
+				// console.log(
+				// 	`Application ${application._id} approved. User ${
+				// 		application.applicantId
+				// 	} role updated to ${newRole}. Created record: ${
+				// 		createdRecord ? createdRecord._id : "None"
+				// 	}`
+				// );
 			}
 		}
 
@@ -534,7 +939,7 @@ export const updateApplicationStatus = async (req, res) => {
 			application,
 		});
 	} catch (error) {
-		console.error("Error updating application status:", error);
+		// console.error("Error updating application status:", error);
 		res
 			.status(500)
 			.json({ success: false, message: "Server error.", error: error.message });
@@ -572,10 +977,350 @@ export const addApplicationNote = async (req, res) => {
 			application,
 		});
 	} catch (error) {
-		console.error("Error adding note to application:", error);
+		// console.error("Error adding note to application:", error);
 		res.status(500).json({
 			success: false,
 			message: "Server error while adding note.",
+			error: error.message,
+		});
+	}
+};
+
+// AGENT-SPECIFIC ENDPOINTS
+
+// 1. Agent-Specific Application Filtering
+export const getAgentApplications = async (req, res) => {
+	try {
+		const agentId = req.decoded.id;
+		const {
+			status,
+			search,
+			page = 1,
+			limit = 10,
+			sortBy = "createdAt",
+			sortOrder = "desc",
+		} = req.query;
+
+		// Get agent's operational area from user profile
+		const agent = await User.findById(agentId);
+		if (!agent || agent.role !== "agent") {
+			return res.status(403).json({
+				success: false,
+				message: "Access denied. Only agents can use this endpoint.",
+			});
+		}
+
+		if (
+			!agent.operationalArea ||
+			!agent.operationalArea.region ||
+			!agent.operationalArea.district
+		) {
+			return res.status(400).json({
+				success: false,
+				message: "Agent's operational area is not properly configured.",
+			});
+		}
+
+		// Build query for seller applications in agent's operational area
+		const query = {
+			applicationType: "seller-application",
+			"operationalArea.region": agent.operationalArea.region,
+			"operationalArea.district": agent.operationalArea.district,
+		};
+
+		// Filter by status if specified
+		if (status && status !== "all") {
+			query.status = status;
+		}
+
+		// Search by applicant name or email if specified
+		if (search && search.trim()) {
+			query.$or = [
+				{ applicantName: { $regex: search.trim(), $options: "i" } },
+				{ applicantEmail: { $regex: search.trim(), $options: "i" } },
+			];
+		}
+
+		// Calculate pagination
+		const pageNumber = parseInt(page);
+		const pageSize = parseInt(limit);
+		const skip = (pageNumber - 1) * pageSize;
+
+		// Sort options
+		const sortOptions = {};
+		sortOptions[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+		// Execute query with pagination
+		const applications = await Application.find(query)
+			.sort(sortOptions)
+			.skip(skip)
+			.limit(pageSize)
+			.exec();
+
+		// Get total count for pagination
+		const totalApplications = await Application.countDocuments(query);
+		const totalPages = Math.ceil(totalApplications / pageSize);
+
+		res.json({
+			success: true,
+			applications,
+			totalApplications,
+			totalPages,
+			currentPage: pageNumber,
+			pageSize,
+			agentOperationalArea: {
+				region: agent.operationalArea.region,
+				district: agent.operationalArea.district,
+			},
+		});
+	} catch (error) {
+		// console.error("Error fetching agent applications:", error);
+		res.status(500).json({
+			success: false,
+			message: "Server error while fetching agent applications.",
+			error: error.message,
+		});
+	}
+};
+
+// 2. Agent Role Assignment Check
+export const getAgentOperationalArea = async (req, res) => {
+	try {
+		const agentId = req.decoded.id;
+
+		// Get agent's profile
+		const agent = await User.findById(agentId).select(
+			"name email role operationalArea verified"
+		);
+
+		if (!agent || agent.role !== "agent") {
+			return res.status(403).json({
+				success: false,
+				message: "Access denied. Only agents can use this endpoint.",
+			});
+		}
+
+		// Check if operational area is properly configured
+		const hasOperationalArea =
+			agent.operationalArea &&
+			agent.operationalArea.region &&
+			agent.operationalArea.district;
+
+		res.json({
+			success: true,
+			message: "Agent operational area retrieved successfully.",
+			agent: {
+				id: agent._id,
+				name: agent.name,
+				email: agent.email,
+				role: agent.role,
+				verified: agent.verified,
+				operationalArea: agent.operationalArea || null,
+				hasValidOperationalArea: hasOperationalArea,
+			},
+		});
+	} catch (error) {
+		// console.error("Error fetching agent operational area:", error);
+		res.status(500).json({
+			success: false,
+			message: "Server error while fetching agent operational area.",
+			error: error.message,
+		});
+	}
+};
+
+// 3. Enhanced Agent Statistics
+export const getAgentApplicationStatistics = async (req, res) => {
+	try {
+		const agentId = req.decoded.id;
+
+		// Get agent's operational area
+		const agent = await User.findById(agentId);
+		if (!agent || agent.role !== "agent") {
+			return res.status(403).json({
+				success: false,
+				message: "Access denied. Only agents can use this endpoint.",
+			});
+		}
+
+		if (
+			!agent.operationalArea ||
+			!agent.operationalArea.region ||
+			!agent.operationalArea.district
+		) {
+			return res.status(400).json({
+				success: false,
+				message: "Agent's operational area is not properly configured.",
+			});
+		}
+
+		// Base query for agent's operational area
+		const baseQuery = {
+			applicationType: "seller-application",
+			"operationalArea.region": agent.operationalArea.region,
+			"operationalArea.district": agent.operationalArea.district,
+		};
+
+		// Get counts by status
+		const [total, pending, approved, rejected, inReview] = await Promise.all([
+			Application.countDocuments(baseQuery),
+			Application.countDocuments({ ...baseQuery, status: "pending" }),
+			Application.countDocuments({ ...baseQuery, status: "approved" }),
+			Application.countDocuments({ ...baseQuery, status: "rejected" }),
+			Application.countDocuments({ ...baseQuery, status: "in-review" }),
+		]);
+
+		// Get applications by date (last 30 days)
+		const thirtyDaysAgo = new Date();
+		thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+		const recentApplications = await Application.aggregate([
+			{
+				$match: {
+					...baseQuery,
+					createdAt: { $gte: thirtyDaysAgo },
+				},
+			},
+			{
+				$group: {
+					_id: {
+						$dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+					},
+					count: { $sum: 1 },
+				},
+			},
+			{ $sort: { _id: 1 } },
+		]);
+
+		res.json({
+			success: true,
+			message: "Agent application statistics retrieved successfully",
+			operationalArea: {
+				region: agent.operationalArea.region,
+				district: agent.operationalArea.district,
+			},
+			statistics: {
+				total,
+				pending,
+				approved,
+				rejected,
+				inReview,
+				recentTrend: recentApplications,
+			},
+		});
+	} catch (error) {
+		// console.error("Error fetching agent application statistics:", error);
+		res.status(500).json({
+			success: false,
+			message: "Server error while fetching agent statistics.",
+			error: error.message,
+		});
+	}
+};
+
+// Get user's own application status
+export const getUserApplicationStatus = async (req, res) => {
+	try {
+		const userId = req.decoded.id;
+
+		// Find the most recent application for this user
+		const application = await Application.findOne({
+			applicantId: userId,
+		}).sort({ createdAt: -1 });
+
+		if (!application) {
+			return res.json({
+				success: true,
+				hasApplication: false,
+				applicationType: null,
+				status: null,
+				applicationId: null,
+			});
+		}
+
+		res.json({
+			success: true,
+			hasApplication: true,
+			applicationType: application.applicationType,
+			status: application.status,
+			applicationId: application._id,
+			submittedAt: application.createdAt,
+			reviewedAt: application.reviewedAt,
+			reviewNotes: application.reviewNotes,
+		});
+	} catch (error) {
+		// console.error("Error fetching user application status:", error);
+		res.status(500).json({
+			success: false,
+			message: "Server error while fetching application status.",
+			error: error.message,
+		});
+	}
+};
+
+// Get user's application by userId (for admins/agents or own applications)
+export const getUserApplications = async (req, res) => {
+	try {
+		const { userId } = req.params;
+		const requesterId = req.decoded.id;
+		const requesterRole = req.decoded.role;
+
+		// Check authorization
+		if (userId !== requesterId && !["admin", "agent"].includes(requesterRole)) {
+			return res.status(403).json({
+				success: false,
+				message: "You are not authorized to view this user's applications.",
+			});
+		}
+
+		// For agents, additional checks needed
+		if (requesterRole === "agent" && userId !== requesterId) {
+			// Get agent's operational area
+			const agent = await User.findById(requesterId);
+			if (!agent || !agent.operationalArea) {
+				return res.status(400).json({
+					success: false,
+					message: "Agent's operational area is not configured.",
+				});
+			}
+
+			// Find user's applications
+			const userApplications = await Application.find({
+				applicantId: userId,
+			});
+
+			// Check if any application is in agent's operational area
+			const hasAccessibleApplication = userApplications.some(
+				(app) =>
+					app.applicationType === "seller-application" &&
+					app.operationalArea?.region === agent.operationalArea.region &&
+					app.operationalArea?.district === agent.operationalArea.district
+			);
+
+			if (!hasAccessibleApplication) {
+				return res.status(403).json({
+					success: false,
+					message:
+						"No applications found in your operational area for this user.",
+				});
+			}
+		}
+
+		// Fetch user's applications
+		const applications = await Application.find({
+			applicantId: userId,
+		}).sort({ createdAt: -1 });
+
+		res.json({
+			success: true,
+			applications,
+			totalApplications: applications.length,
+		});
+	} catch (error) {
+		// console.error("Error fetching user applications:", error);
+		res.status(500).json({
+			success: false,
+			message: "Server error while fetching user applications.",
 			error: error.message,
 		});
 	}

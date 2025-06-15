@@ -61,10 +61,12 @@ import mongoose from "mongoose";
 
 const agentSchema = new mongoose.Schema(
 	{
+		// Basic user information
 		userId: {
-			type: mongoose.Schema.Types.ObjectId,
+			type: String,
 			ref: "User",
 			required: true,
+			unique: true,
 		},
 		name: {
 			type: String,
@@ -74,7 +76,6 @@ const agentSchema = new mongoose.Schema(
 		email: {
 			type: String,
 			required: true,
-			unique: true,
 			trim: true,
 			lowercase: true,
 		},
@@ -83,113 +84,180 @@ const agentSchema = new mongoose.Schema(
 			required: true,
 			trim: true,
 		},
-		warehouseAddress: {
-			street: {
-				type: String,
-				required: true,
-			},
-			district: {
-				type: String,
-				required: true,
-			},
-			region: {
-				type: String,
-				required: true,
-			},
-			postalCode: String,
-			gpsCoordinates: {
-				latitude: Number,
-				longitude: Number,
-			},
+		profilePicture: {
+			type: String,
+			default: "https://i.ibb.co/MBtjqXQ/no-avatar.gif",
 		},
-		identificationDocument: {
-			documentType: {
-				type: String,
-				enum: [
-					"national_id",
-					"passport",
-					"driving_license",
-					"business_license",
-				],
-				required: true,
-			},
-			documentNumber: {
-				type: String,
-				required: true,
-			},
-			documentImage: {
-				type: String,
-				required: true,
-			},
+		fullAddress: {
+			type: String,
+			trim: true,
 		},
-		warehouseCapacity: {
-			type: Number,
+
+		// Application reference
+		applicationId: {
+			type: String,
+			ref: "Application",
 			required: true,
-			min: 0,
+		},
+		operationalArea: {
+			region: { type: String, required: true },
+			district: { type: String, required: true },
+		},
+		formData: {
+			type: mongoose.Schema.Types.Mixed, // Original application form data
+			required: true,
+		},
+
+		// Agent-specific properties
+		agentId: {
+			type: String,
+			unique: true,
+			required: true, // Auto-generated agent ID
+		},
+
+		// Business information - extracted from formData for easier querying
+		businessName: {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		businessType: {
+			type: String,
+			enum: [
+				"Agricultural Trading",
+				"Wholesale Distribution",
+				"Logistics & Transportation",
+				"Cold Storage",
+				"Food Processing",
+				"Import/Export",
+				"Other",
+			],
+			required: true,
+		},
+		experience: {
+			type: String,
+			required: true,
+		},
+		warehouseAddress: {
+			type: String,
+			required: true,
+		},
+		warehouseSize: {
+			type: String,
+			required: true,
+		},
+		coverageAreas: {
+			type: String,
+			required: true,
+		},
+		businessLicense: {
+			type: String, // URL
+			default: "",
 		},
 		warehouseImages: {
-			type: [String],
-			validate: [
-				(val) => val.length > 0,
-				"At least one warehouse image is required",
-			],
+			type: [String], // Array of URLs
+			default: [],
 		},
-		status: {
+
+		// Location details
+		region: {
 			type: String,
-			enum: ["pending", "approved", "rejected"],
-			default: "pending",
+			required: true,
 		},
-		membershipFee: {
-			amount: {
-				type: Number,
-				required: true,
-			},
-			paid: {
-				type: Boolean,
-				default: false,
-			},
-			paymentDate: Date,
-			transactionId: String,
+		district: {
+			type: String,
+			required: true,
 		},
-		sellerCount: {
-			type: Number,
-			default: 0,
+
+		// Financial and reference information
+		bankAccountDetails: {
+			type: String,
+			default: "",
 		},
-		reviewCount: {
-			type: Number,
-			default: 0,
+		references: {
+			type: String,
+			default: "",
 		},
-		averageRating: {
-			type: Number,
-			default: 0,
-			min: 0,
-			max: 5,
+		motivation: {
+			type: String,
+			required: true,
 		},
-		applicationDate: {
-			type: Date,
-			default: Date.now,
-		},
-		approvedBy: {
-			adminId: {
-				type: mongoose.Schema.Types.ObjectId,
-				ref: "User",
-			},
-			approvedAt: Date,
-			notes: String,
-		},
+
+		// Status and verification
 		isActive: {
 			type: Boolean,
 			default: true,
+		},
+		verified: {
+			type: Boolean,
+			default: false, // Approved applications are verified
+		},
+		agentLevel: {
+			type: String,
+			enum: ["junior", "senior", "lead"],
+			default: "junior",
+		},
+
+		// Application approval details
+		approvedBy: {
+			type: String,
+			ref: "User",
+			required: true,
+		},
+		approvedAt: {
+			type: Date,
+			required: true,
+		},
+
+		// Basic performance tracking
+		performance: {
+			totalApplicationsReviewed: { type: Number, default: 0 },
+			applicationsApproved: { type: Number, default: 0 },
+			applicationsRejected: { type: Number, default: 0 },
+		},
+		rating: {
+			average: { type: Number, default: 0, min: 0, max: 5 },
+			count: { type: Number, default: 0 },
+		},
+
+		// Current workload
+		assignedApplications: [
+			{
+				applicationId: { type: String, ref: "Application" },
+				assignedAt: Date,
+				status: {
+					type: String,
+					enum: ["assigned", "in-progress", "completed"],
+					default: "assigned",
+				},
+			},
+		],
+		maxDailyApplications: {
+			type: Number,
+			default: 10,
 		},
 	},
 	{ timestamps: true }
 );
 
-// Indexing for faster search
-agentSchema.index({ status: 1 });
-agentSchema.index({ "warehouseAddress.region": 1 });
-agentSchema.index({ "warehouseAddress.district": 1 });
-agentSchema.index({ email: 1 });
+// Essential indexes
 agentSchema.index({ userId: 1 });
+agentSchema.index({ agentId: 1 });
+agentSchema.index({ email: 1 });
+agentSchema.index({ isActive: 1 });
+agentSchema.index({ verified: 1 });
+agentSchema.index({ "operationalArea.region": 1 });
+agentSchema.index({ "operationalArea.district": 1 });
+agentSchema.index({ businessType: 1 });
+agentSchema.index({ region: 1, district: 1 });
 
-export default mongoose.model("Agent-detail", agentSchema);
+// Pre-save middleware to ensure userId is a string
+agentSchema.pre("save", function (next) {
+	if (this.userId && typeof this.userId !== "string") {
+		this.userId = this.userId.toString();
+	}
+	next();
+});
+
+const Agent = mongoose.model("Agent", agentSchema);
+export default Agent;

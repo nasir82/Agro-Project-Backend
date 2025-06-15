@@ -391,16 +391,6 @@ export const approveApplication = async (req, res) => {
 			newRole = "admin";
 		}
 
-		// Update user role
-		userToUpdate.role = newRole;
-		await userToUpdate.save();
-
-		// Save application
-		await application.save();
-
-		// console.log(
-		// 	`Application ${application._id} approved. User ${application.applicantId} role updated to ${newRole}.`
-		// );
 
 		res.json({
 			success: true,
